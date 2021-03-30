@@ -1,0 +1,451 @@
+---
+title: "Crime Data Analysis and Prediction"
+output: html_notebook
+---
+
+### About Philadelphia
+
+Philadelphia, Pennsylvania’s largest city, is notable for its rich history, on display at the Liberty Bell, Independence Hall (where the Declaration of Independence and Constitution were signed) and other American Revolutionary sites. Also iconic are the steps of the Philadelphia Museum of Art, immortalized by Sylvester Stallone’s triumphant run in the film “Rocky.”
+
+Data was provided by https://www.opendataphilly.org/
+
+### Crime Incidents
+
+Crime incidents from the Philadelphia Police Department. Part I crimes include violent offenses such as aggravated assault, rape, arson, among others. Part II crimes include simple assault, prostitution, gambling, fraud, and other non-violent offenses.
+
+This dataset previously had separate endpoints for various years and types of incidents. These have since been consolidated into a single dataset.
+
+#### Loading and taking a look into the dataset
+
+```{r}
+#install.packages("lubridate")
+#install.packages("virid")
+#install.packages("plotly")
+#install.packages("tm")
+#install.packages("wordcloud")
+#install.packages("leaflet")
+#install.packages("xts")
+#install.packages("highcharter")
+#install.packages("forecast")
+library(data.table)
+library(forecast)
+library(knitr)
+library(tseries)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(viridis)
+library(plotly)
+library(tm)
+library(wordcloud)
+library(RColorBrewer)
+library(leaflet)
+library(xts)
+library(highcharter)
+```
+
+#### Data size and structure.
+
+```{r}
+crime_data <- fread("philly_crime.csv", showProgress = FALSE)
+dim(crime_data)
+str(crime_data)
+```
+
+```{r}
+table(is.na(crime_data))
+```
+* Over 47k records have missing values.
+* Deleting records having missing values.
+
+```{r}
+crime_data<-na.omit(crime_data)
+table(is.na(crime_data))
+```
+* No missing values now
+
+#### Extract Month and Year from the dispatch_date_time attribute
+
+```{r}
+crime_data$Month_Year <- format(as.POSIXct(strptime(crime_data$dispatch_date_time,"%Y-%m-%d %H:%M:%S",tz="GMT")) ,format = "%Y-%m")
+crime <- as.data.frame(crime_data)
+crime$Day <- day(crime$dispatch_date_time)
+crime$Year <- factor(year(crime$dispatch_date_time), levels=2006:2019)
+crime$Month <- factor(month(crime$dispatch_date_time), levels=1:12)
+crime$dispatch_date <- as.Date(crime$dispatch_date)
+```
+
+#### Time Series plot of Philadelphia Crimes
+
+Since the data is in a series of particular time periods or intervals, we are plotting time series to look at trends over years
+```{r}
+by_date <- crime %>% group_by(dispatch_date) %>% summarise(Total = n())
+tseries <- xts(by_date$Total, order.by=as.POSIXct(by_date$dispatch_date))
+hchart(tseries, name = "Crimes") %>% 
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_credits(enabled = TRUE, text = "Data Source: https://www.opendataphilly.org/ ", style = list(fontSize = "12px")) %>%
+  hc_title(text = "Time Series plot of Philadelphia Crimes") %>%
+  hc_legend(enabled = TRUE)
+```
+#### Location with Most Crimes - Top 20
+
+```{r warning=FALSE, fig.width=9, fig.height=5.5}
+by_location <- crime %>% group_by(location_block) %>% 
+  summarise(Total = n()) %>% arrange(desc(Total))
+hchart(by_location[1:20,], "column", hcaes(x = location_block, y = Total, color = Total)) %>%
+  hc_colorAxis(stops = color_stops(n = 10, colors = c("#440321", "#21908C", "#FDE725"))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Locations with most Crimes - Top 20") %>%
+  hc_credits(enabled = TRUE, text = "Data Source: https://www.opendataphilly.org/", style = list(fontSize = "15px")) %>%
+  hc_legend(enabled = FALSE)
+```
+We can observe that 5200 BLOCK Frankford Ave has highest number of crimes recorded.
+
+#### Month comparison for each year(2006 - 2019)
+```{r warning=FALSE,fig.width=9, fig.height=5.5}
+monthplot <- ggplot(crime, aes(Year)) + 
+    geom_bar(fill="#FF8685") +
+    ggtitle("Month comparison for each year(2006 - 2019)") +
+    facet_wrap(~Month) +
+    theme(axis.text.x = element_text(angle=120))
+gg2 <- ggplotly(monthplot)
+gg2
+```
+### Crimes by Hour, Day, Month and Year
+
+```{r warning=FALSE}
+by_hour <- crime %>% 
+  group_by(hour_) %>% 
+  dplyr::summarise(Total = n())
+by_hour
+ggplot(by_hour, aes(hour_, Total, color = hour_)) + 
+  geom_line() + 
+  ggtitle("Crimes By Hour") + 
+  xlab("Hour of the Day") + 
+  ylab("Total Crimes") 
+
+by_day <- crime %>% 
+  group_by(Day) %>% 
+  dplyr::summarise(Total = n())
+by_day
+
+ggplot(by_day, aes(Day, Total, color = Day)) + 
+  geom_line() + 
+  ggtitle("Crimes By Day") + 
+  xlab("Day of the Month") + 
+  ylab("Total Crimes") 
+
+by_month <- crime %>% 
+  group_by(Month) %>% 
+  dplyr::summarise(Total = n())
+
+by_month$Percent <- by_month$Total/dim(crime)[1] * 100
+by_month
+
+ggplot(by_month, aes(Month, Total, fill = Month)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Crimes By Month") + 
+  xlab("Month") + 
+  ylab("Count") + 
+  theme(legend.position = "none")
+
+by_year <- crime %>% 
+  group_by(Year) %>% 
+  dplyr::summarise(Total = n())
+by_year$Percent <- by_year$Total/dim(crime)[1] * 100
+by_year
+
+ggplot(by_year, aes(Year, Total, fill = Year)) + 
+  geom_bar(stat = "identity") +
+  ggtitle("Crimes By Year ") + 
+  xlab("Year") + ylab("Count") + 
+  theme(legend.position = "none")
+
+
+by_hour_year <- crime %>% 
+  group_by(Year,hour_) %>%
+  dplyr::summarise(Total = n())
+
+ggplot(by_hour_year, aes(hour_, Total, color = Year)) + 
+  geom_line(size = 1) + 
+  ggtitle("Crimes By Year and Hour") + 
+  xlab("Hour of the Day") + 
+  ylab("Total Crimes") 
+
+by_hour_month <- crime %>% 
+  group_by(Month,hour_) %>% 
+  dplyr::summarise(Total = n())
+
+ggplot(by_hour_month, aes(hour_, Total, color = Month)) + 
+  geom_line(size = 1) + 
+  ggtitle("Crimes By Month and Hour") + 
+  xlab("Hour of the Day") + 
+  ylab("Total Crimes") 
+
+by_month_day <- crime %>% 
+  group_by(Month, Day) %>% 
+  dplyr::summarise(Total = n())
+
+ggplot(by_month_day, aes(Day, Total, color = Month)) + 
+  geom_line(size = 2) + 
+  ggtitle("Crimes By Month and Day") + 
+  xlab("Day") + 
+  ylab("Count")
+
+
+by_month_year <- crime %>% 
+  group_by(Year, Month) %>% 
+  dplyr::summarise(Total = n())
+
+ggplot(by_month_year, aes(Year, Month, fill = Total)) + 
+  geom_tile(color = "white") + 
+  ggtitle("Crimes By Year and Month") + 
+  xlab("Year") + 
+  ylab("Month") 
+```
+### Crimes by Code, Month and Year
+```{r warning=FALSE}
+by_code <- crime %>% 
+  group_by(text_general_code) %>% 
+  dplyr::summarise(Total = n()) %>% 
+  arrange(desc(Total))
+
+by_code[1:50,]
+
+ggplot(by_code, aes(reorder(text_general_code, Total), Total)) + 
+  geom_bar(stat = "identity") + coord_flip() +  
+  scale_y_continuous(breaks = seq(0,450000,50000)) + 
+  ggtitle("Crimes By Code") + 
+  xlab("Crime Text Code") + 
+  ylab("Total Crimes")
+
+by_code_year <- crime %>% group_by(Year, text_general_code) %>% 
+  dplyr::summarise(Total = n())
+
+by_code_year[1:10,]
+
+ggplot(by_code_year, aes(reorder(text_general_code, Total), Total, fill = Year)) + 
+  geom_bar(stat = "identity") + 
+  scale_y_continuous(breaks = seq(0,450000,50000)) + 
+  coord_flip() + ggtitle("Crimes By Code and Year") + 
+  xlab("Crime Text Code") + 
+  ylab("Total Crimes")
+
+
+by_code_month <- crime %>% 
+  group_by(Month, text_general_code) %>% 
+  dplyr::summarise(Total = n())
+by_code_month[1:10,]
+ggplot(by_code_month, aes(reorder(text_general_code, Total), Total, fill = Month)) + 
+  geom_bar(stat = "identity") + 
+  scale_y_continuous(breaks = seq(0,450000,50000)) + 
+  coord_flip() + 
+  ggtitle("Crimes By Code and Month") + 
+  xlab("Crime Text Code") + 
+  ylab("Total Crimes")
+```
+### Crime Types
+
+```{r warning=FALSE}
+by_type <- crime %>% group_by(text_general_code) %>% 
+  summarise(Total = n()) %>% arrange(desc(Total))
+hchart(by_type, "column", hcaes(text_general_code, y = Total, color = Total)) %>%
+  hc_colorAxis(stops = color_stops(n = 10, colors = c("#440154", "#21908C", "#FDE725"))) %>%
+  hc_add_theme(hc_theme_darkunica()) %>%
+  hc_title(text = "Crime Types") %>%
+  hc_credits(enabled = TRUE, text = "Sources: Philadelphia Police Department", style = list(fontSize = "12px")) %>%
+  hc_legend(enabled = FALSE)
+```
+### Some Top Crimes 
+
+```{r warning=FALSE}
+plotcrime  <- function(varcrime) {
+  crimes <- crime[crime$text_general_code == varcrime,] 
+  crimes_by_date <- crimes %>% group_by(dispatch_date) %>% dplyr::summarise(Total = n())
+  crimes_by_date$dispatch_date <- as.Date(crimes_by_date$dispatch_date)
+  tseries <- xts(crimes_by_date$Total, order.by=as.POSIXct(crimes_by_date$dispatch_date))
+  hchart(tseries, name = "Crimes") %>% 
+    hc_colorAxis(stops = color_stops(n = 10, colors = c("#440154", "#21908C", "#FDE725"))) %>%
+    hc_add_theme(hc_theme_darkunica()) %>%
+    hc_title(text = varcrime) %>%
+    hc_credits(enabled = TRUE, text = "Sources: Philadelphia Police Department", style = list(fontSize = "12px")) %>%
+    hc_legend(enabled = FALSE)
+}
+```
+
+```{r warning=FALSE }
+plotcrime("All Other Offenses")
+```
+
+```{r warning=FALSE}
+plotcrime("Other Assaults")
+```
+```{r warning=FALSE}
+plotcrime("Thefts")
+```
+```{r warning=FALSE}
+plotcrime("Fraud")
+```
+```{r warning=FALSE}
+plotcrime("Theft from Vehicle")
+```
+```{r warning=FALSE}
+plotcrime("Vandalism/Criminal Mischief")
+```
+```{r warning=FALSE}
+plotcrime("Narcotic / Drug Law Violations")
+```
+### Crimes by District Police HeadQuarters and Police Service Area
+```{r warning=FALSE}
+table(crime$dc_dist)
+table(crime$psa)
+
+crime$dc_dist <- factor(crime$dc_dist)
+
+by_dc <- crime %>% group_by(dc_dist) %>% 
+  dplyr::summarise(Total = n()) %>% 
+  dplyr::arrange(desc(Total))
+
+by_dc_psa <- crime %>% 
+  group_by(dc_dist, psa) %>% 
+  dplyr::summarise(Total = n())
+
+ggplot(by_dc, aes(reorder(dc_dist, -Total), Total)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Crimes by District Police HeadQuarters") + 
+  xlab("Police HQ") + 
+  ylab("Total Crimes") 
+by_dc_top5 <- by_dc$dc_dist[1:5]
+by_top5_dc <- subset(crime, dc_dist %in% by_dc$dc_dist[1:5])
+by_top5_dc$dc_dist <- factor(by_top5_dc$dc_dist)
+
+ggplot(by_top5_dc, aes(dc_dist, fill = psa)) + 
+  geom_bar(position = "dodge") + 
+  ggtitle("Crimes by District Police HeadQuarters - Top 5") + 
+  xlab("Police HQ") + 
+  ylab("Total Crimes") 
+
+ggplot(by_dc_psa, aes(dc_dist, psa, fill = Total)) + 
+  geom_tile(color = "white") + 
+  ggtitle("Crimes by District Police HeadQuarters and Police Service Area") + 
+  xlab("District Police HeadQuarters") + 
+  ylab("Police Service Area") 
+```
+### Top crime in every District Head Quarters  and every Police Service Area
+
+```{r warning=FALSE}
+dc_by_crime <- crime  %>% 
+  group_by(dc_dist, text_general_code) %>% 
+  dplyr::summarise(Total = n()) %>% 
+  arrange(desc(Total)) %>% top_n(n = 1)
+
+dc_by_crime <- as.data.frame(dc_by_crime)
+dc_by_crime$dc_dist <- factor(dc_by_crime$dc_dist)
+dc_by_crime$text_general_code <- factor(dc_by_crime$text_general_code)
+
+ggplot(dc_by_crime, aes(dc_dist, Total, fill = text_general_code)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Top Crime by District Police HeadQuarters") + 
+  xlab("District Police HeadQuarters") + 
+  ylab("Total") 
+
+crime_by_psa <- crime  %>% 
+  group_by(psa, text_general_code) %>% 
+  dplyr::summarise(Total = n()) %>% 
+  arrange(desc(Total)) %>% top_n(n = 1)
+
+crime_by_psa <- as.data.frame(crime_by_psa)
+crime_by_psa$psa <- factor(crime_by_psa$psa)
+crime_by_psa$text_general_code <- factor(crime_by_psa$text_general_code)
+
+head(crime_by_psa)
+ggplot(crime_by_psa, aes(psa, Total, fill = text_general_code)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Top crime in Every Police Service Area") + 
+  xlab("Police Service Area") + 
+  ylab("Total")
+
+
+crime_by_dc_psa <- crime  %>% 
+group_by(dc_dist, psa, text_general_code) %>% 
+  dplyr::summarise(Total = n()) %>% 
+  arrange(desc(Total)) %>% top_n(n = 1)
+
+crime_by_dc_psa <- as.data.frame(crime_by_dc_psa)
+crime_by_dc_psa$dc_dist <- factor(crime_by_dc_psa$dc_dist)
+crime_by_dc_psa$text_general_code <- factor(crime_by_dc_psa$text_general_code)
+
+ggplot(crime_by_dc_psa, aes(dc_dist, psa, fill = text_general_code)) + 
+  geom_tile(color = "white") + 
+  ggtitle("Top crime in Every Police Service Area and District Head Quarters") + 
+  xlab("District Police HeadQuarters") + 
+  ylab("Police Service Area")
+```
+* All other Offenses classification is most common among all the District HeadQuarters, Second being Other Assaults
+* It would be interesting to see how these two have increased or decreased over the years
+* All other Offenses classification is most common among all Police Service Areas
+* Assaults is most common in District HQ 14
+* Very interesting one is Thefts from Vehicle and motor vehicle recovery are the only crimes in District HQ 92.
+* Also we can see that in District HQ 77 there is only one type of crime reported i.e. Thefts.
+
+### Predictive Model - ARIMA Model
+
+Several explorations have pointed out that crime seems to be seasonal and we wanted to explore this with a time series. Assuming that seasonal trends might repeat themselves, we are exploring this using the forecast package and using linear regression to predict trends.
+
+#### Crimes by month
+We can clearly see a downward trend in overall crime rates and also the fact that there seem to be seasonal peaks and declines.
+
+```{r}
+bymo <- crime_data[order(Month_Year), .N, by=Month_Year]
+dts <- ts(bymo$N, start = c(2006,1), frequency = 12)
+dts_decomp<-decompose(dts, "multiplicative")
+plot(dts,ylab="Total Crimes", main = "Monthly crimes with trend")
+lines(dts_decomp$time.series[,2], col="tomato")
+```
+#### Seasonal component extracted from the timeseries.
+```{r}
+plot(dts_decomp)
+```
+#### How seasonal is the data?
+This autocorrelation shows a very high correlation every 12 months. 
+```{r}
+Acf(dts, main = "ACF of crime")
+```
+#### Forecast with a linear model
+The red line shows the model's prediction against the actual numbers in black. The model seems quite close. 
+
+```{r}
+f_crime <- tslm(dts ~ trend + season)
+ff_crime <- forecast(f_crime,level=c(99),h =12)
+plot(ff_crime)
+lines(fitted(ff_crime), col = "red")
+```
+#### Residuals from model
+This shows the residuals
+
+```{r}
+res <- residuals(ff_crime)
+plot(res, ylab="Residuals",xlab="Year", main = "Residuals") 
+summary(res)
+```
+#### Predictions
+Here are the predicted overall crime numbers. 
+
+```{r, echo=FALSE}
+ff_crime
+```
+### Conclusion:
+
+* There is decrease in overall crime in last 15 years
+* Crimes are most during middle quarter of every year(May-August)
+* Crimes are least during Winter season and highest during Summer season.
+* Crimes are least around 6AM in the morning
+* Crimes are most around 4PM in the evening
+* There is common trend in crimes over the years
+* All Other Offenses, Other Assults and Thefts are the top 3 Crimes
+* Thefts have increased over the years
+* Narcotic/Drug Law Violations have decreased over the years
+* District Police Head Quarters coded 15, 24 and 25 have the highest number of crimes reported.
+* Top Crime in every District Police Head Quarters : All other offenses, other assaults, thefts and theft from vehicle.
+
